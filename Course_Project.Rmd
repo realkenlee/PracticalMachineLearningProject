@@ -1,0 +1,127 @@
+---
+title: 'Course Project : Predicting Manner Using Personal Activity Data'
+author: "Ken Lee"
+date: "December 8, 2015"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(cache=TRUE)
+```
+
+#Synopsis
+
+#Getting the data
+
+The following code download the data and store them in data.frame training and testing. One issue that arises when I was building the predictive model was that training a random forest model takes too long. After some google search, I realize it takes a lot more time to train factor variable than numeric ones. Some feature contains !#DIV/0 (divide by zero) as an input. The following read.csv statement now correctly coded them as NA and as a result preserving those features as numeric rather than factor. 
+
+```{r warning = FALSE, message = FALSE, cache = TRUE}
+
+library(caret)
+library(dplyr)
+library(ggplot2)
+
+urls = c("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",
+"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv")
+
+if(!file.exists("pml-training.csv"))
+        download.file(url = urls[1], destfile = "pml-training.csv", method = "curl")
+if(!file.exists("pml-testing.csv"))
+        download.file(url = urls[2], destfile = "pml-testing.csv", method = "curl")
+
+# data is now correctly imported with
+training <- read.table(file = "pml-training.csv", sep = ",", header = TRUE, na.strings = c("#DIV/0!", "", "NA"))  
+testing <- read.table(file = "pml-testing.csv", sep = ",", header = TRUE, na.strings = c("#DIV/0!", "", "NA"))
+
+```
+
+# Data clean up and preproessing
+
+An initial data exploration reveals a few issue with the raw data.
+
+- There are approximately 100 columns containing a high number of NA(s). Concretely, approximately 98% of the data in these columns are NA(s). **Action - We will remove these columns on both the training and testing data set.** Please refer to the plot below.
+
+- The first 7 columns consist of user name, observation number, and time related information. These information are not used because they are not generalizable. 
+
+The resulting dataset contains only the response column classe and 53 other predictors.
+
+```{r warning = FALSE, message = FALSE,  cache = TRUE}
+num.features <- dim(training)[[2]]
+y <- apply(is.na(training), 2, sum) / dim(training)[[1]]  # Retreiving the portion of Nas in each feature column
+
+qplot(x = 1:num.features, y = y) + geom_point() + ylab("Proportion of NAs") + xlab("Feature Index") + ggtitle("Proportion of NAs for each column")
+
+# rows to keep
+keep <- !(apply(is.na(training), 2, sum) / dim(training)[[1]] > 0.8)
+
+# a column with more than 80% NA values are now eliminated from the analysis
+training <- training[, keep]
+
+training <- training[, -(1:7)]
+```
+
+#Cross validation 
+
+Beside using k-fold cross validation within the training set. I have decided to set aside 70% of the training data as an additional cross validation set. This will provide an extra assurance on how "out-of-sample" prediction will perform. Another major reason why I split the training data further is that the model training was taking too long with the full dataset. Reducing training sample did not affect accuracy. 
+
+```{r warning = FALSE, message = FALSE, cache = TRUE}
+set.seed(168)
+inTraining <- createDataPartition(training$classe, p = 0.30, list = FALSE) 
+
+training1 <- training[inTraining, ]
+cv1 <- training[-inTraining,]
+```
+
+# Modelling and Selection
+
+The models I have decided to try are Random Forest and Linear Discriminant Analysis. The following code will train the two models and print out a table of accuracy. We will measure the training cross validation accuray as well as the extra cross validation set accruacy (70% of original training data). 
+
+```{r warning = FALSE, message = FALSE, cache = TRUE}
+
+model_rf <-train(classe~.,data=training1,method="rf",
+               trControl=trainControl(method="cv",number=5),
+                prox=TRUE,allowParallel=TRUE)
+
+model_lda <- train(classe~., data =training1, method = "lda",
+                   trControl = trainControl(method = "cv", number = 5),
+                   prox = TRUE, allowParallel = TRUE)
+
+# The following are output from the two models
+
+print(model_rf)
+print(model_lda)
+```
+
+To decide which model we will pick, we will use the cross validation set (70% of training data). We will use the higher accuracy of the two models.
+
+```{r, cache = TRUE}
+rf.accuracy <- confusionMatrix(predict(model_rf, cv1), cv1$classe)$overall["Accuracy"]
+lda.accuracy <- confusionMatrix(predict(model_lda, cv1), cv1$classe)$overall["Accuracy"]
+result <- rbind(rf.accuracy, lda.accuracy)
+row.names(result) <- c("Random Forest", "Linear Distriminant Analysis")
+result
+```
+
+We have decided to use Linear Discrinimant Analysis. The next set of code will make prediction on the test cases and store them in answer. At the same time we will create the answer files.
+
+```{r}
+
+# We will perform the same data treatment as before
+testing <- testing[, keep]
+testing <- testing[, -(1:7)]
+answers = predict(model_rf, testing)
+
+
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+pml_write_files(answers)
+answers
+```
+
+That's it, thank you.
